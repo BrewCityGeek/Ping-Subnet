@@ -13,7 +13,7 @@
     -OutputCsv: Optional path to export results as a CSV file.
     -ShowOffline: Switch to include offline hosts in the output (by default, only online hosts are shown).
     -Port: Optional TCP port to check on each host (default: 0, which skips port checking).
-    -ErrorLog: Optional path to export errors to a CSV file.
+    -ErrorLog: Optional path to export errors to a CSV file (only entries with Status starting with 'Error' are exported).
     -Include: Optional list of specific IPs to include in the scan.
     -Exclude: Optional list of specific IPs to exclude from the scan.
 
@@ -226,13 +226,13 @@ if ($Port -gt 0) {
 
 # Optionally export to CSV (respecting ShowOffline)
 if ($OutputCsv) {
-    $displayResults | Export-Csv -Path $OutputCsv -NoTypeInformation
+    $displayResults | Export-Csv -Path $OutputCsv -NoTypeInformation -Force
     Write-Host "Results exported to $OutputCsv" -ForegroundColor Green
 }
 
-# Error logging
+# Error logging (exports only entries where Status starts with 'Error')
 if ($ErrorLog) {
-    $errorResults = $sortedResults | Where-Object { $_.Status -ne 'Up' }
+    $errorResults = $sortedResults | Where-Object { $_.Status -like 'Error*' }
     $errorResults | Export-Csv -Path $ErrorLog -NoTypeInformation
     Write-Host "Errors exported to $ErrorLog" -ForegroundColor Red
 }
@@ -242,4 +242,4 @@ $up = ($sortedResults | Where-Object { $_.Status -eq 'Up' }).Count
 $down = ($sortedResults | Where-Object { $_.Status -eq 'Down' }).Count
 $err = ($sortedResults | Where-Object { $_.Status -like 'Error*' }).Count
 $elapsed = (Get-Date) - $startTime
-Write-Host ("`nSummary: Scanned $total hosts. Up: $up, Down: $down, Errors: $err. Time: {0:N1} sec" -f $elapsed.TotalSeconds) -ForegroundColor Cyan
+Write-Host ("`nSummary: Scanned $total hosts. Up: $up, Down: $down, Errors: $err. Time elapsed: {0:N1} seconds" -f $elapsed.TotalSeconds) -ForegroundColor Cyan

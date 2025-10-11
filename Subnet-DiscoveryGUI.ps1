@@ -161,8 +161,27 @@ function Start-NetworkScan {
     $stopButton.Enabled = $true
     
     # Get parameters from GUI
-    $targetSubnet = if ($subnetTextBox.Text) { $subnetTextBox.Text } else { $autoSubnetLabel.Text }
-    $maxJobs = [int]$jobsNumeric.Value
+    $targetSubnet = if ($subnetTextBox.Text) { 
+        $subnetTextBox.Text 
+    } else { 
+        # Extract the actual subnet from the auto-detected label (remove "Auto: " prefix)
+        $autoSubnetLabel.Text -replace '^Auto:\s*', ''
+    }
+    
+    # Fix: Handle potential string values in NumericUpDown control
+    try {
+        if ($jobsNumeric.Value -is [string]) {
+            # If the value is a string (like "Auto: 10"), extract the numeric part
+            $numericPart = $jobsNumeric.Value -replace '.*:\s*(\d+).*', '$1'
+            $maxJobs = [int]$numericPart
+        } else {
+            $maxJobs = [int]$jobsNumeric.Value
+        }
+    } catch {
+        Update-LogDisplay "Warning: Invalid jobs value, using default of 10"
+        $maxJobs = 10
+    }
+    
     $portsToScan = if ($portCheckBox.Checked) { Get-PortList $portTextBox.Text } else { @() }
     $showOfflineHosts = $showOfflineCheckBox.Checked
     
@@ -630,7 +649,8 @@ Auto-detected Subnet: $autoDetectedSubnet
     $jobsNumeric.Location = New-Object System.Drawing.Point(140, 55)
     $jobsNumeric.Minimum = 1
     $jobsNumeric.Maximum = 100
-    $jobsNumeric.Value = $MaxConcurrentJobs
+    $jobsNumeric.Value = [int]$MaxConcurrentJobs
+    $jobsNumeric.DecimalPlaces = 0
     $scanGroup.Controls.Add($jobsNumeric)
 
     # Port scanning
@@ -777,6 +797,21 @@ Auto-detected Subnet: $autoDetectedSubnet
     # Show form
     Update-LogDisplay "Network Discovery Tool initialized"
     Update-LogDisplay "Auto-detected subnet: $autoDetectedSubnet"
+    
+    # Enable key events for the form
+    $form.KeyPreview = $true
+    
+    # Add Enter key handler to start scan
+    $form.Add_KeyDown({
+        param($sender, $e)
+        if ($e.KeyCode -eq [System.Windows.Forms.Keys]::Enter) {
+            # Only start scan if not already active and start button is enabled
+            if (-not $global:ScanActive -and $startButton.Enabled) {
+                Start-NetworkScan
+            }
+        }
+    })
+    
     $form.ShowDialog()
     
 } else {

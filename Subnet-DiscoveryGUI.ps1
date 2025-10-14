@@ -10,7 +10,7 @@
 .PARAMETERS
     -GUI: Switch to launch the GUI interface (default behavior).
     -Subnet: The full subnet in CIDR notation (for command-line use).
-    -MaxConcurrentJobs: Maximum number of parallel jobs to run at once (default: 10).
+    -MaxConcurrentJobs: Maximum number of parallel jobs to run at once (default: 5).
     -OutputCsv: Optional path to export results as a CSV file.
     -ShowOffline: Switch to include offline hosts in the output.
     -Port: Optional TCP port to check on each host (default: 0, which skips port checking).
@@ -28,7 +28,7 @@
 param(
     [switch]$GUI = $true,                 # Launch GUI interface
     [string]$Subnet = $null,              # Full subnet in CIDR (auto-detect if not provided)
-    [int]$MaxConcurrentJobs = 10,         # Max parallel jobs
+    [int]$MaxConcurrentJobs = 5,          # Max parallel jobs
     [string]$OutputCsv = $null,           # Optional: path to export CSV
     [switch]$ShowOffline,                 # Optional: include offline hosts if specified
     [int]$Port = 0,                       # Optional: TCP port to check (0 = skip)
@@ -50,7 +50,7 @@ $global:ScanIPAddresses = @()
 $global:ScanCurrentIndex = 0
 $global:ScanTotalIPs = 0
 $global:ScanStartTime = $null
-$global:ScanMaxJobs = 10
+$global:ScanMaxJobs = 5
 $global:ScanPortsToScan = @()
 $global:ScanShowOffline = $false
 
@@ -124,8 +124,8 @@ function Update-Results {
         $row = $dataTable.NewRow()
         $row["IP Address"] = $result.IPAddress
         $row["Status"] = $result.Status
-        $row["Hostname"] = if ($result.Hostname) { $result.Hostname } else { "-" }
-        $row["MAC Address"] = if ($result.MAC) { $result.MAC } else { "-" }
+        $row["Hostname"] = if ($result.hostname) { $result.hostname } else { "-" }
+        $row["MAC Address"] = if ($result.mac) { $result.mac } else { "-" }
         
         # Add port scan results
         foreach ($port in $portsToShow) {
@@ -235,7 +235,7 @@ function Start-NetworkScan {
                         if ($result) {
                             $global:ScanResults += $result
                             if ($result.Status -eq 'Up') {
-                                Update-LogDisplay "Found active host: $($result.IPAddress) - $($result.Hostname)"
+                                Update-LogDisplay "Found active host: $($result.IPAddress) - $($result.hostname)"
                             }
                         }
                         Remove-Job -Job $job -Force -ErrorAction SilentlyContinue
@@ -352,7 +352,11 @@ function Export-Results {
     if ($saveDialog.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {
         try {
             $exportResults = if ($showOfflineCheckBox.Checked) { $global:ScanResults } else { $global:ScanResults | Where-Object { $_.Status -eq 'Up' } }
-            $exportResults | Export-Csv -Path $saveDialog.FileName -NoTypeInformation -Force
+            
+            # Select only the desired CSV columns, excluding unwanted properties
+            $csvData = $exportResults | Select-Object 'ip address', 'ip state', 'description', 'hostname', 'fw_object', 'mac', 'owner', 'device', 'port', 'note', 'location'
+            
+            $csvData | Export-Csv -Path $saveDialog.FileName -NoTypeInformation -Force
             Update-LogDisplay "Results exported to: $($saveDialog.FileName)"
             [System.Windows.Forms.MessageBox]::Show("Results exported successfully to:`n$($saveDialog.FileName)", "Export Complete", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Information)
         }
@@ -364,8 +368,8 @@ function Export-Results {
 
 # --- Original Core Functions ---
 if ($MaxConcurrentJobs -lt 1 -or $MaxConcurrentJobs -gt 500) {
-    Write-Host "WARNING: MaxConcurrentJobs should be between 1 and 500. Defaulting to 10." -ForegroundColor Yellow
-    $MaxConcurrentJobs = 10
+    Write-Host "WARNING: MaxConcurrentJobs should be between 1 and 500. Defaulting to 5." -ForegroundColor Yellow
+    $MaxConcurrentJobs = 5
 }
 if ($MaxConcurrentJobs -gt 100) {
     Write-Host "WARNING: High parallelism may impact system performance!" -ForegroundColor Red
@@ -531,18 +535,41 @@ $ScriptBlock = {
             }
         }
         [PSCustomObject]@{
+            'ip address'  = $TargetIP
+            'ip state'    = ""
+            'description' = ""
+            'hostname'    = $hostname
+            'fw_object'   = ""
+            'mac'         = $mac
+            'owner'       = ""
+            'device'      = ""
+            'port'        = if ($PortsToScan.Count -gt 0 -and $portResults.Count -gt 0) { 
+                $openPorts = $portResults.GetEnumerator() | Where-Object { $_.Value -eq $true } | ForEach-Object { $_.Key }
+                if ($openPorts) { ($openPorts -join ",") } else { "" }
+            } else { "" }
+            'note'        = ""
+            'location'    = ""
+            # Keep original properties for GUI compatibility
             IPAddress = $TargetIP
             Status    = if ($ping) { "Up" } else { "Down" }
-            Hostname  = $hostname
-            MAC       = $mac
             PortResults = $portResults
         }
     } catch {
         [PSCustomObject]@{
+            'ip address'  = $TargetIP
+            'ip state'    = ""
+            'description' = ""
+            'hostname'    = $null
+            'fw_object'   = ""
+            'mac'         = $null
+            'owner'       = ""
+            'device'      = ""
+            'port'        = ""
+            'note'        = ""
+            'location'    = ""
+            # Keep original properties for GUI compatibility
             IPAddress = $TargetIP
             Status    = "Error: $_"
-            Hostname  = $null
-            MAC       = $null
             PortResults = @{}
         }
     }
@@ -754,7 +781,7 @@ Auto-detected Subnet: $autoDetectedSubnet
 
     # Results grid
     $resultsGrid = New-Object System.Windows.Forms.DataGridView
-    $resultsGrid.Size = New-Object System.Drawing.Size(920, 580)
+    $resultsGrid.Size = New-Object System.Drawing.Size(920, 520)
     $resultsGrid.Location = New-Object System.Drawing.Point(10, 10)
     $resultsGrid.ReadOnly = $true
     $resultsGrid.AllowUserToAddRows = $false
@@ -762,6 +789,24 @@ Auto-detected Subnet: $autoDetectedSubnet
     $resultsGrid.SelectionMode = "FullRowSelect"
     $resultsGrid.AutoSizeColumnsMode = "AllCells"
     $resultsTab.Controls.Add($resultsGrid)
+
+    # Export button on Results tab
+    $exportButtonResults = New-Object System.Windows.Forms.Button
+    $exportButtonResults.Text = "Export CSV"
+    $exportButtonResults.Size = New-Object System.Drawing.Size(100, 30)
+    $exportButtonResults.Location = New-Object System.Drawing.Point(10, 540)
+    $exportButtonResults.BackColor = [System.Drawing.Color]::LightBlue
+    $exportButtonResults.Add_Click({ Export-Results })
+    $resultsTab.Controls.Add($exportButtonResults)
+
+    # Results summary label
+    $resultsSummaryLabel = New-Object System.Windows.Forms.Label
+    $resultsSummaryLabel.Text = "Click 'Export CSV' to save results to file"
+    $resultsSummaryLabel.Size = New-Object System.Drawing.Size(800, 20)
+    $resultsSummaryLabel.Location = New-Object System.Drawing.Point(120, 545)
+    $resultsSummaryLabel.Font = New-Object System.Drawing.Font("Arial", 9)
+    $resultsSummaryLabel.ForeColor = [System.Drawing.Color]::Gray
+    $resultsTab.Controls.Add($resultsSummaryLabel)
 
     # Log Tab
     $logTab = New-Object System.Windows.Forms.TabPage
